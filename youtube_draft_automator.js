@@ -13,6 +13,8 @@
  * Usage | 使用方法：
  * 1. Open YouTube Studio Channel content page | 開啟 YouTube Studio 頻道內容頁面
  *    URL: https://studio.youtube.com/channel/YOUR_ID/videos/upload
+ *    OR Playlist Page | 或播放清單頁面
+ *    URL: https://studio.youtube.com/playlist/YOUR_PLAYLIST_ID/videos
  * 2. Press F12, go to Console tab | 按 F12，切換到 Console 標籤
  * 3. Type "allow pasting" first (Chrome security) | 先輸入 "allow pasting"（Chrome 安全性）
  * 4. Paste this script and run | 貼上此腳本並執行
@@ -38,11 +40,12 @@ class YouTubeAutomator {
             autoPagination: config.autoPagination !== false,
 
             // ========== Delay Settings (ms) | 延遲時間設定（毫秒）==========
-            delayBetweenVideos: config.delayBetweenVideos || 3000,  // Between videos | 影片間隔
-            dialogLoadDelay: config.dialogLoadDelay || 2000,        // Dialog loading | 對話框載入
-            dropdownDelay: config.dropdownDelay || 1500,            // Dropdown menu | 下拉選單
-            tabSwitchDelay: config.tabSwitchDelay || 1000,          // Tab switching | 標籤切換
-            pageLoadDelay: config.pageLoadDelay || 3000,            // Page loading | 頁面載入
+            // 註: 大部分操作已有元件偵測，這些是表础延遲時間
+            delayBetweenVideos: config.delayBetweenVideos || 500,   // Between videos | 影片間隔
+            dialogLoadDelay: config.dialogLoadDelay || 1500,        // Dialog loading | 對話框載入
+            dropdownDelay: config.dropdownDelay || 500,             // Dropdown menu | 下拉選單
+            tabSwitchDelay: config.tabSwitchDelay || 750,           // Tab switching | 標籤切換
+            pageLoadDelay: config.pageLoadDelay || 2500,            // Page loading | 頁面載入
         };
 
         // Statistics | 統計
@@ -125,18 +128,19 @@ class YouTubeAutomator {
         this.log('設定每頁顯示 50 項...', 'progress');
 
         try {
-            const pageSizeDropdown = document.querySelector(
-                'ytcp-dropdown-trigger[aria-label*="Rows per page"],' +
-                'ytcp-dropdown-trigger[aria-label*="每頁列數"],' +
-                '.ytcp-table-footer ytcp-dropdown-trigger'
-            );
+            // 策略 1: 使用結構化選擇器 (ytcp-table-footer 內的 dropdown)
+            const pageSizeDropdown = document.querySelector('.ytcp-table-footer ytcp-dropdown-trigger') ||
+                // Fallback: 嘗試找 paginator 區域
+                document.querySelector('ytcp-table-paginator ytcp-dropdown-trigger');
 
             if (pageSizeDropdown) {
                 await this.safeClick(pageSizeDropdown, '每頁數量下拉選單');
                 await this.sleep(500);
 
+                // 選項通常是 tp-yt-paper-item
                 const options = document.querySelectorAll('tp-yt-paper-item');
                 for (const option of options) {
+                    // 50 是數字，語言無關
                     if (option.textContent.trim() === '50') {
                         await this.safeClick(option, '50 項目選項');
                         this.log('已設定每頁顯示 50 項', 'success');
@@ -144,6 +148,7 @@ class YouTubeAutomator {
                         return true;
                     }
                 }
+                // 如果沒找到 50，關閉選單
                 document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
             }
 
@@ -159,11 +164,9 @@ class YouTubeAutomator {
      * 檢查是否有下一頁
      */
     hasNextPage() {
+        // 使用穩定的ID #navigate-after
         const nextButton = document.querySelector(
-            'ytcp-icon-button#navigate-after:not([disabled]),' +
-            '[aria-label="Next page"]:not([disabled]),' +
-            '[aria-label="下一頁"]:not([disabled]),' +
-            '.navigation-button.forward:not([disabled])'
+            'ytcp-icon-button#navigate-after:not([disabled])'
         );
         return nextButton && !nextButton.disabled;
     }
@@ -177,10 +180,7 @@ class YouTubeAutomator {
         this.log('前往下一頁...', 'progress');
 
         const nextButton = document.querySelector(
-            'ytcp-icon-button#navigate-after:not([disabled]),' +
-            '[aria-label="Next page"]:not([disabled]),' +
-            '[aria-label="下一頁"]:not([disabled]),' +
-            '.navigation-button.forward:not([disabled])'
+            'ytcp-icon-button#navigate-after:not([disabled])'
         );
 
         if (nextButton && !nextButton.disabled) {
@@ -198,11 +198,50 @@ class YouTubeAutomator {
 
     /**
      * 獲取所有 "Edit draft" 按鈕
+     * 優先使用 href 屬性判斷，其次使用文字內容
      */
     getEditDraftButtons() {
-        return Array.from(document.querySelectorAll('button')).filter(
-            btn => btn.textContent.trim() === 'Edit draft' ||
-                btn.textContent.trim() === '編輯草稿'
+        const buttons = [];
+        const processedRows = new Set();
+
+        // 策略 1: 結構化搜尋 (Language Agnostic)
+        // 找到所有的編輯連結 (通常在標題或縮圖)
+        const editLinks = document.querySelectorAll('a[href*="/video/"][href*="/edit"]');
+
+        for (const link of editLinks) {
+            // 往上找直到找到行容器 (ytcp-video-row)
+            const row = link.closest('ytcp-video-row');
+            if (row && !processedRows.has(row)) {
+                // 在此行內尋找合適的按鈕
+                // "Edit draft" 按鈕通常是 ytcp-button (文字按鈕), 不是 ytcp-icon-button (圖示按鈕)
+                // 且它通常位於特定的 render-status 區域
+                const actionButton = row.querySelector('ytcp-button.edit-draft-button') ||
+                    row.querySelector('.render-status-content ytcp-button') ||
+                    // 如果找不到特定class，找行內第一個可見的非icon button，且通常不是 "Analytics" 或 "Comments"
+                    Array.from(row.querySelectorAll('ytcp-button')).find(btn => {
+                        const style = window.getComputedStyle(btn);
+                        return style.display !== 'none' &&
+                            style.visibility !== 'hidden' &&
+                            !btn.hasAttribute('disabled');
+                    });
+
+                if (actionButton) {
+                    buttons.push(actionButton);
+                    processedRows.add(row);
+                }
+            }
+        }
+
+        if (buttons.length > 0) {
+            return buttons;
+        }
+
+        // 策略 2: 文字搜尋 (Fallback)
+        return Array.from(document.querySelectorAll('button, ytcp-button')).filter(
+            btn => {
+                const text = btn.textContent.trim();
+                return text === 'Edit draft' || text === '編輯草稿';
+            }
         );
     }
 
@@ -228,63 +267,70 @@ class YouTubeAutomator {
 
     /**
      * 點擊 Visibility 標籤
+     * 如果 Visibility 標籤被禁用（例如 Initial Check 有錯誤），則使用 Next 按鈕導航
      */
     async clickVisibilityTab() {
-        // 方法 1: 使用 step-badge-3 (Visibility 是第 4 個標籤，index 3)
-        const visibilityTabById = document.querySelector('button[role="tab"][id*="step-badge-3"]');
-        if (visibilityTabById) {
-            await this.safeClick(visibilityTabById, 'Visibility 標籤 (by id)');
+        const visibilityTab = document.querySelector('#step-badge-3');
+
+        // 檢查 Visibility 標籤是否存在且未被禁用
+        if (visibilityTab && !visibilityTab.hasAttribute('disabled')) {
+            await this.safeClick(visibilityTab, 'Visibility 標籤 (step-badge-3)');
             return true;
         }
 
-        // 方法 2: 使用文字內容
-        const tabs = Array.from(document.querySelectorAll('button[role="tab"]'));
-        const visibilityTab = tabs.find(tab =>
-            tab.textContent.includes('Visibility') ||
-            tab.textContent.includes('瀏覽權限') ||
-            tab.textContent.includes('公開設定')
-        );
+        // 如果 Visibility 標籤被禁用，使用 Next 按鈕逐步導航
+        if (visibilityTab && visibilityTab.hasAttribute('disabled')) {
+            this.log('Visibility 標籤被禁用，使用 Next 按鈕導航...', 'progress');
 
-        if (visibilityTab) {
-            await this.safeClick(visibilityTab, 'Visibility 標籤');
-            return true;
+            // 最多嘗試點擊 Next 3 次（從 Details -> Video Elements -> Initial Check -> Visibility）
+            for (let i = 0; i < 3; i++) {
+                // 尋找 Next 按鈕 (通常在 dialog footer，ID 為 #next-button 或類似)
+                const nextButton = document.querySelector('#next-button') ||
+                    document.querySelector('ytcp-button#next-button') ||
+                    document.querySelector('[test-id="NEXT_STEP_BUTTON"]');
+
+                if (nextButton && !nextButton.hasAttribute('disabled')) {
+                    await this.safeClick(nextButton, `Next 按鈕 (第 ${i + 1} 次)`);
+                    await this.sleep(this.config.tabSwitchDelay);
+
+                    // 檢查是否已經到達 Visibility 標籤
+                    const currentVisibilityTab = document.querySelector('#step-badge-3');
+                    if (currentVisibilityTab &&
+                        (currentVisibilityTab.hasAttribute('active') ||
+                            currentVisibilityTab.getAttribute('aria-selected') === 'true')) {
+                        this.log('已透過 Next 按鈕到達 Visibility 標籤', 'success');
+                        return true;
+                    }
+                } else {
+                    this.log(`Next 按鈕不可用或被禁用 (嘗試 ${i + 1})`, 'warning');
+                    break;
+                }
+            }
         }
 
-        this.log('找不到 Visibility 標籤', 'warning');
+        this.log('無法到達 Visibility 標籤', 'warning');
         return false;
     }
 
     /**
      * 選擇「非兒童內容」
      */
+    /**
+     * 選擇「非兒童內容」
+     */
     async selectNotForKids() {
         if (!this.config.setNotForKids) return true;
 
-        this.log('設定為非兒童內容...', 'progress');
+        this.log('Setting Not For Kids... | 設定為非兒童內容...', 'progress');
 
-        // 方法 1: 使用正確的 name 屬性
+        // 使用正確的 name 屬性 (Language Agnostic)
         const notForKidsRadio = document.querySelector(
             'tp-yt-paper-radio-button[name="VIDEO_MADE_FOR_KIDS_NOT_MFK"]'
         );
 
         if (notForKidsRadio) {
-            await this.safeClick(notForKidsRadio, '非兒童內容選項 (by name)');
-            this.log('已選擇：非兒童內容', 'success');
-            return true;
-        }
-
-        // 方法 2: 使用文字內容
-        const radios = Array.from(document.querySelectorAll('tp-yt-paper-radio-button'));
-        const radioByText = radios.find(radio => {
-            const text = radio.textContent || '';
-            return text.includes("No, it's not made for kids") ||
-                text.includes('不是專為兒童打造') ||
-                text.includes('非兒童');
-        });
-
-        if (radioByText) {
-            await this.safeClick(radioByText, '非兒童內容選項 (by text)');
-            this.log('已選擇：非兒童內容', 'success');
+            await this.safeClick(notForKidsRadio, '非兒童內容選項 (VIDEO_MADE_FOR_KIDS_NOT_MFK)');
+            this.log('Selected: Not For Kids | 已選擇：非兒童內容', 'success');
             return true;
         }
 
@@ -296,9 +342,8 @@ class YouTubeAutomator {
      * 選擇可見性
      */
     async selectVisibility(visibility) {
-        this.log(`選擇 ${visibility.toUpperCase()} 可見性...`, 'progress');
+        this.log(`Selecting ${visibility.toUpperCase()} visibility... | 選擇 ${visibility.toUpperCase()} 可見性...`, 'progress');
 
-        // 方法 1: 使用 name 屬性（最可靠）
         const nameMap = {
             'public': 'PUBLIC',
             'unlisted': 'UNLISTED',
@@ -311,29 +356,9 @@ class YouTubeAutomator {
                 `tp-yt-paper-radio-button[name="${radioName}"]`
             );
             if (radioByName) {
-                await this.safeClick(radioByName, `${visibility} 選項 (by name)`);
-                this.log(`已選擇 ${visibility.toUpperCase()}`, 'success');
+                await this.safeClick(radioByName, `${visibility} 選項 (name=${radioName})`);
+                this.log(`Selected ${visibility.toUpperCase()} | 已選擇 ${visibility.toUpperCase()}`, 'success');
                 return true;
-            }
-        }
-
-        // 方法 2: 使用文字內容
-        const visibilityKeywords = {
-            'public': ['Public', '公開', '公开'],
-            'unlisted': ['Unlisted', '不公開', '不公開列出', '非公开'],
-            'private': ['Private', '私人', '私有']
-        };
-        const keywords = visibilityKeywords[visibility.toLowerCase()] || visibilityKeywords['unlisted'];
-
-        const radios = Array.from(document.querySelectorAll('tp-yt-paper-radio-button'));
-        for (const radio of radios) {
-            const text = radio.textContent || '';
-            for (const keyword of keywords) {
-                if (text.includes(keyword)) {
-                    await this.safeClick(radio, `${visibility} 選項 (by text)`);
-                    this.log(`已選擇 ${visibility.toUpperCase()}`, 'success');
-                    return true;
-                }
             }
         }
 
@@ -404,12 +429,12 @@ class YouTubeAutomator {
 
                 // 點擊 Done 按鈕關閉對話框
                 await this.sleep(500);
-                const doneButton = document.querySelector(
-                    'ytcp-playlist-dialog button[aria-label="Done"], ' +
-                    'ytcp-playlist-dialog #done-button, ' +
-                    '#playlists-list + * button, ' +
-                    'button[aria-label="Done"]'
-                );
+                // 尋找 dialog 內的 done button. 通常是 class="done-button" 或在 action 區域
+                const doneButton = document.querySelector('.done-button') ||
+                    document.querySelector('ytcp-playlist-dialog #done-button') ||
+                    document.querySelector('ytcp-button[label="Done"]') || // Fallback if attribute exists
+                    // 找 dialog footer 的最後一個按鈕
+                    document.querySelector('ytcp-playlist-dialog .ytcp-playlist-dialog-content + div ytcp-button:last-child');
 
                 if (doneButton && doneButton.offsetParent !== null) {
                     await this.safeClick(doneButton, '播放清單完成按鈕');
@@ -419,36 +444,13 @@ class YouTubeAutomator {
             }
         }
 
-        // 備用：嘗試其他選擇器
-        const checkboxes = document.querySelectorAll(
-            'tp-yt-paper-checkbox, ytcp-checkbox-lit, [role="option"]'
-        );
-
-        for (const checkbox of checkboxes) {
-            const text = checkbox.textContent || '';
-            if (text.includes(playlistName)) {
-                const isChecked = checkbox.hasAttribute('checked') ||
-                    checkbox.getAttribute('aria-checked') === 'true';
-
-                if (!isChecked) {
-                    await this.safeClick(checkbox, `播放清單: ${playlistName}（備用方法）`);
-                    this.log(`已勾選播放清單: ${playlistName}（備用方法）`, 'success');
-                }
-
-                // 關閉對話框
-                await this.sleep(500);
-                const doneBtn = document.querySelector('button[aria-label="Done"]');
-                if (doneBtn) {
-                    await this.safeClick(doneBtn, '播放清單完成');
-                }
-                return true;
-            }
-        }
-
         this.log(`找不到播放清單 "${playlistName}"`, 'warning');
 
         // 嘗試關閉對話框（即使沒找到播放清單）
-        const cancelBtn = document.querySelector('button[aria-label="Cancel"]');
+        // 尋找取消按鈕 (通常是 done button 旁邊的那個)
+        const cancelBtn = document.querySelector('ytcp-playlist-dialog #cancel-button') ||
+            document.querySelector('ytcp-playlist-dialog .ytcp-playlist-dialog-content + div ytcp-button:first-child');
+
         if (cancelBtn) {
             await this.safeClick(cancelBtn, '取消按鈕');
         }
@@ -460,55 +462,53 @@ class YouTubeAutomator {
      * 點擊儲存/發佈按鈕
      */
     async clickSaveButton() {
-        this.log('尋找儲存按鈕...', 'progress');
+        this.log('Finding save button... | 尋找儲存按鈕...', 'progress');
 
-        // 尋找 Save/Done/Publish 按鈕
-        const buttons = Array.from(document.querySelectorAll('button, ytcp-button'));
-        const saveButton = buttons.find(btn => {
-            const text = btn.textContent.trim();
-            return ['Save', 'Done', 'Publish', '儲存', '完成', '發布'].some(t => text.includes(t));
-        });
+        // 使用穩定的 ID
+        const saveButton = document.querySelector('#save-button') ||
+            document.querySelector('#publish-button') ||
+            document.querySelector('#done-button');
 
         if (saveButton && !saveButton.disabled) {
-            const dialog = saveButton.closest('ytcp-dialog, tp-yt-paper-dialog, dialog');
-            if (dialog) {
-                await this.safeClick(saveButton, '儲存按鈕');
-                return true;
-            }
+            await this.safeClick(saveButton, '儲存/發佈按鈕');
+            return true;
         }
 
-        // 備用：直接用 ID
-        const idButtons = ['#done-button', '#save-button', '#publish-button'];
-        for (const id of idButtons) {
-            const btn = document.querySelector(id);
-            if (btn && !btn.disabled) {
-                await this.safeClick(btn, '儲存按鈕');
-                return true;
-            }
-        }
-
-        this.log('找不到儲存按鈕', 'error');
+        this.log('找不到儲存按鈕 (#save-button / #publish-button / #done-button)', 'error');
         return false;
     }
 
     /**
      * 等待發佈完成
+     * 策略: 等待分享對話框出現 (內含影片連結)，這是語言獨立的
      */
     async waitForPublishComplete() {
-        this.log('等待發佈完成...', 'progress');
+        this.log('Waiting for publish complete... | 等待發佈完成...', 'progress');
 
-        // 等待「影片已發佈」訊息
-        const success = await this.waitForText('Video published', 10000) ||
-            await this.waitForText('影片已發布', 10000) ||
-            await this.waitForText('已儲存', 10000);
+        const startTime = Date.now();
+        const timeout = 30000; // 增加超時時間到 30 秒，因為上傳可能需要時間
 
-        if (success) {
-            this.log('影片發佈成功！', 'success');
-            return true;
+        while (Date.now() - startTime < timeout) {
+            // 檢查分享對話框是否出現 (內有影片連結)
+            // 分享對話框中有 #share-url 連結，這是語言獨立的
+            const shareUrl = document.querySelector('ytcp-video-share-dialog #share-url');
+            if (shareUrl && shareUrl.offsetParent !== null) {
+                this.log('Share dialog detected, publish success! | 偵測到分享對話框，影片發佈成功！', 'success');
+                return true;
+            }
+
+            // 備用: 檢查 ytcp-video-share-dialog 本身是否出現
+            const shareDialog = document.querySelector('ytcp-video-share-dialog');
+            if (shareDialog && shareDialog.offsetParent !== null) {
+                this.log('偵測到分享對話框 (ytcp-video-share-dialog)，影片發佈成功！', 'success');
+                return true;
+            }
+
+            await this.sleep(500);
         }
 
-        // 備用：等待對話框關閉
-        await this.sleep(3000);
+        // 超時，但為了安全起見仍繼續（可能網路慢但已經成功）
+        this.log('等待分享對話框超時，嘗試繼續...', 'warning');
         return true;
     }
 
@@ -516,26 +516,38 @@ class YouTubeAutomator {
      * 關閉對話框
      */
     async closeDialogs() {
-        // Close 按鈕
-        const closeButtons = Array.from(document.querySelectorAll('button')).filter(
-            btn => ['Close', '關閉'].includes(btn.textContent.trim())
-        );
+        // 1. 尋找發佈完成後的分享對話框的關閉按鈕
+        // 分享對話框中有 #close-icon-button (X 按鈕) 和 #close-button (關閉按鈕)
+        const shareDialogCloseIcon = document.querySelector('ytcp-video-share-dialog #close-icon-button');
+        if (shareDialogCloseIcon && shareDialogCloseIcon.offsetParent !== null) {
+            await this.safeClick(shareDialogCloseIcon, '分享對話框關閉按鈕 (X)');
+            await this.sleep(500);
+            return; // 成功關閉
+        }
 
+        const shareDialogCloseBtn = document.querySelector('ytcp-video-share-dialog #close-button');
+        if (shareDialogCloseBtn && shareDialogCloseBtn.offsetParent !== null) {
+            await this.safeClick(shareDialogCloseBtn, '分享對話框關閉按鈕');
+            await this.sleep(500);
+            return; // 成功關閉
+        }
+
+        // 2. 通用: 使用 icon button "close"
+        const closeButtons = document.querySelectorAll('ytcp-icon-button[icon="close"]');
         for (const btn of closeButtons) {
             if (btn.offsetParent !== null) {
-                await this.safeClick(btn, '關閉按鈕');
+                await this.safeClick(btn, '關閉按鈕 (icon=close)');
+                await this.sleep(300);
             }
         }
 
-        // X 按鈕
-        const xButtons = document.querySelectorAll('[aria-label*="close"], [aria-label*="關閉"]');
-        for (const btn of xButtons) {
-            if (btn.offsetParent !== null) {
-                await this.safeClick(btn, 'X 按鈕');
-            }
+        // 3. 嘗試 #close-button (通用)
+        const closeBtnId = document.querySelector('#close-button');
+        if (closeBtnId && closeBtnId.offsetParent !== null) {
+            await this.safeClick(closeBtnId, '關閉按鈕 (#close-button)');
         }
 
-        // ESC 鍵
+        // 4. ESC 鍵 (Last resort)
         document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
         await this.sleep(500);
     }
@@ -557,29 +569,29 @@ class YouTubeAutomator {
                 throw new Error('找不到 Edit draft 按鈕');
             }
 
-            this.log('點擊 Edit draft 按鈕...', 'progress');
+            this.log('Clicking Edit draft button... | 點擊 Edit draft 按鈕...', 'progress');
             await this.safeClick(editButton, 'Edit draft 按鈕');
             await this.sleep(1500);
 
             // 步驟 2: 等待對話框載入
             await this.waitForElement('dialog, ytcp-dialog, [role="dialog"]', 5000);
-            this.log('編輯對話框已載入', 'success');
+            this.log('Edit dialog loaded | 編輯對話框已載入', 'success');
 
             // ========== Details 標籤（預設開啟）==========
             // 等待內容完全載入
             await this.sleep(this.config.dialogLoadDelay);
 
-            // 步驟 4: 選擇播放清單（在 Details 標籤中，位置較上）
+            // 選擇播放清單（在 Details 標籤中，位置較上）
             await this.selectPlaylist(this.config.playlistName);
 
-            // 步驟 5: 捲動到 Audience 區域（位置較下）
+            // 捲動到 Audience 區域（位置較下）
             const scrollable = document.querySelector('#scrollable-content');
             if (scrollable) {
                 scrollable.scrollTop = scrollable.scrollHeight;
-                await this.sleep(500);
+                await this.sleep(200); // 縮短捲動等待
             }
 
-            // 步驟 6: 設定非兒童內容（在 Details 標籤中）
+            // 設定非兒童內容（在 Details 標籤中）
             await this.selectNotForKids();
 
             // ========== Visibility 標籤 ==========
@@ -605,13 +617,13 @@ class YouTubeAutomator {
             await this.closeDialogs();
 
             this.stats.success++;
-            this.log(`第 ${processedCount + 1} 個影片處理成功 ✓`, 'success');
+            this.log(`Video #${processedCount + 1} processed successfully ✓ | 第 ${processedCount + 1} 個影片處理成功 ✓`, 'success');
 
             return true;
 
         } catch (error) {
             this.stats.failed++;
-            this.log(`第 ${processedCount + 1} 個影片處理失敗: ${error.message}`, 'error');
+            this.log(`Video #${processedCount + 1} failed: ${error.message} | 第 ${processedCount + 1} 個影片處理失敗`, 'error');
 
             await this.closeDialogs();
 
@@ -636,30 +648,30 @@ class YouTubeAutomator {
         this.log('║  YouTube Studio 草稿自動發佈腳本 v1.0                          ║', 'success');
         this.log('╚════════════════════════════════════════════════════════════════╝', 'success');
 
-        // 確認在正確頁面（Channel content 影片頁面）
+        // 確認在正確頁面（Channel content 影片頁面 或 Playlist 頁面）
         const currentUrl = window.location.href;
         const channelContentPattern = /^https:\/\/studio\.youtube\.com\/channel\/[^\/]+\/videos/;
+        const playlistPattern = /^https:\/\/studio\.youtube\.com\/playlist\/[^\/]+\/videos/;
 
-        if (!channelContentPattern.test(currentUrl)) {
+        if (!channelContentPattern.test(currentUrl) && !playlistPattern.test(currentUrl)) {
             const errorMessage =
-                '請在 YouTube Studio 的「Channel content」頁面執行此腳本！\n\n' +
+                '請在 YouTube Studio 的「Channel content」或「Playlist」頁面執行此腳本！\n\n' +
                 '正確的網址格式：\n' +
-                'https://studio.youtube.com/channel/你的頻道ID/videos/upload\n\n' +
+                '1. https://studio.youtube.com/channel/YOUR_ID/videos/upload\n' +
+                '2. https://studio.youtube.com/playlist/YOUR_PLAYLIST_ID/videos\n\n' +
                 '當前網址：\n' + currentUrl;
             alert(errorMessage);
-            this.log('腳本需要在 Channel content 頁面執行', 'error');
-            this.log(`正確網址格式: https://studio.youtube.com/channel/UC.../videos/upload`, 'info');
+            this.log('腳本需要在 Channel content 或 Playlist 頁面執行', 'error');
             this.log(`當前網址: ${currentUrl}`, 'info');
             return;
         }
 
-        this.log('✓ 已確認在 Channel content 頁面', 'success');
+        this.log('✓ Confirmed on correct page | 已確認在正確的頁面', 'success');
+
+        // (已移除 setItemsPerPage，因為自動換頁功能已足夠)
 
         try {
-            // 步驟 1: 設定每頁顯示數量
-            await this.setItemsPerPage();
-
-            // 步驟 2: 計算草稿數量，如果當前頁沒有則嘗試翻頁
+            // 計算草稿數量，如果當前頁沒有則嘗試翻頁
             this.stats.total = this.getDraftCount();
 
             // 如果當前頁沒有草稿但有下一頁，嘗試翻頁找草稿
@@ -689,7 +701,7 @@ class YouTubeAutomator {
             this.log(`  • 自動換頁: ${this.config.autoPagination ? '是' : '否'}`, 'info');
             this.log(`  • 當前頁草稿: ${this.stats.total} 個`, 'info');
 
-            this.log('\n開始執行...', 'progress');
+            this.log('\nStarting... | 開始執行...', 'progress');
             this.isProcessing = true;
 
             let totalProcessed = 0;
@@ -697,7 +709,7 @@ class YouTubeAutomator {
 
             // 主迴圈：處理當前頁 + 自動換頁
             do {
-                this.log(`\n━━━ 第 ${pageCount} 頁 ━━━`, 'progress');
+                this.log(`\n━━━ Page ${pageCount} | 第 ${pageCount} 頁 ━━━`, 'progress');
 
                 // 處理當前頁面的草稿
                 while (totalProcessed < targetCount) {
@@ -777,11 +789,11 @@ const automator = new YouTubeAutomator({
     batchSize: -1,                      // -1 = 全部
 
     // 延遲時間（毫秒，可調整速度）
-    delayBetweenVideos: 3000,
-    dialogLoadDelay: 2000,
-    dropdownDelay: 1500,
-    tabSwitchDelay: 1000,
-    pageLoadDelay: 3000
+    delayBetweenVideos: 500,
+    dialogLoadDelay: 1500,
+    dropdownDelay: 500,
+    tabSwitchDelay: 750,
+    pageLoadDelay: 2500
 });
 
 automator.start();

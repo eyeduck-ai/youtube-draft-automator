@@ -1,5 +1,5 @@
-# YouTube Draft Automator v1.0
-# YouTube 草稿影片自動發佈腳本  v1.0
+# YouTube Draft Automator v1.1
+# YouTube 草稿影片自動發佈腳本 v1.1
 
 > Author: ZMH
 
@@ -12,23 +12,27 @@ A browser console script that automates publishing draft videos in YouTube Studi
 
 | Feature | Description |
 |---------|-------------|
+| 🏛️ Playlist Page Support | Works on both Channel Content and Playlist pages |
+| 🌐 Language Independent | Selectors work regardless of YouTube Studio language |
+| 🌍 Bilingual Logs | Console logs in both English and Chinese |
 | 🎛️ Visibility Options | Publish as Public / Unlisted / Private |
-| � Playlist Support | Auto-add videos to specified playlist |
+| 📋 Playlist Support | Auto-add videos to specified playlist |
 | 👶 Not For Kids | Auto-mark as "Not made for kids" |
 | 📄 Auto Pagination | Automatically navigate through pages |
-| ✅ Publish Confirmation | Detects "Video published" success message |
+| ✅ Publish Confirmation | Detects share dialog for reliable success detection |
 | ⚠️ Error Handling | Detailed logging and error recovery |
-| 🔍 URL Validation | Ensures script runs on correct page |
 
 | 功能 | 說明 |
 |------|------|
+| 🏛️ 播放清單頁面支援 | 支援 Channel Content 和 Playlist 頁面 |
+| 🌐 語言獨立 | 選擇器不依賴 YouTube Studio 介面語言 |
+| 🌍 雙語日誌 | 控制台訊息同時顯示英文和中文 |
 | 🎛️ 可見性選項 | 發佈為 公開 / 不公開 / 私人 |
 | 📋 播放清單支援 | 自動添加影片到指定播放清單 |
 | 👶 非兒童內容 | 自動標記為「不是專為兒童打造」 |
 | 📄 自動翻頁 | 自動瀏覽多頁處理所有草稿 |
-| ✅ 發佈確認 | 偵測「影片已發布」成功訊息 |
+| ✅ 發佈確認 | 偵測分享對話框確認發佈成功 |
 | ⚠️ 錯誤處理 | 詳細日誌記錄與錯誤恢復 |
-| � 網址驗證 | 確保腳本在正確頁面執行 |
 
 ---
 
@@ -39,7 +43,9 @@ A browser console script that automates publishing draft videos in YouTube Studi
 1. Go to: `https://studio.youtube.com`
 2. Click **Content** in the left sidebar
 3. Filter by **Visibility: Draft** (optional but recommended)
-4. Your URL should look like: `https://studio.youtube.com/channel/YOUR_CHANNEL_ID/videos/upload`
+4. Your URL should look like:
+   - Channel: `https://studio.youtube.com/channel/YOUR_CHANNEL_ID/videos/upload`
+   - Playlist: `https://studio.youtube.com/playlist/YOUR_PLAYLIST_ID/videos`
 
 ---
 
@@ -126,13 +132,13 @@ const automator = new YouTubeAutomator({
     // 自動翻頁
     autoPagination: true,
     
-    // === Delay Settings (milliseconds) ===
-    // === 延遲時間設定（毫秒）===
-    delayBetweenVideos: 3000,   // Between videos | 影片間隔
-    dialogLoadDelay: 2000,      // Dialog loading | 對話框載入
-    dropdownDelay: 1500,        // Dropdown menu | 下拉選單
-    tabSwitchDelay: 1000,       // Tab switching | 標籤切換
-    pageLoadDelay: 3000         // Page loading | 頁面載入
+    // === Delay Settings (milliseconds) - Optimized ===
+    // === 延遲時間設定（毫秒）- 已優化 ===
+    delayBetweenVideos: 500,    // Between videos | 影片間隔
+    dialogLoadDelay: 1500,      // Dialog loading | 對話框載入
+    dropdownDelay: 500,         // Dropdown menu | 下拉選單
+    tabSwitchDelay: 750,        // Tab switching | 標籤切換
+    pageLoadDelay: 2500         // Page loading | 頁面載入
 });
 
 automator.start();
@@ -224,9 +230,10 @@ delayBetweenVideos: 5000,  // Increase for slower | 增加此值可減慢速度
 dialogLoadDelay: 3000,     // Increase if dialogs load slowly | 對話框載入慢時增加
 ```
 
-> **Note**: Please keep the browser window focused and visible. Background throttling can cause script failures due to loading speed differences.
+> [!WARNING]
+> **Keep browser in foreground!** This script does NOT work well in background tabs. Browser throttling can cause element detection failures.
 > 
-> **注意**：請保持瀏覽器視窗開啟並在最上層（不要縮小）。頁面載入速度的差異可能會導致腳本失效，保持視窗可見可避免瀏覽器背景執行時的效能限制。
+> **請保持瀏覽器在前景！** 此腳本不適合在背景分頁執行。瀏覽器的背景限制會導致元件偵測失敗。
 
 ---
 
